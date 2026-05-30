@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import httpx
 
-from maibot_sdk import API
 # ===== logger =====
 class NoLogger:
     def info(self, msg):
@@ -38,8 +37,45 @@ _last_cookie_update_time = 0
 qrcode_path = str(Path(__file__).parent.resolve() / "qrcode.png")
 cookie_path = str(Path(__file__).parent.resolve() / "cookies.json")
 
-# 支持的cookie更新方法
-COOKIE_METHODS = ["adapter", "napcat", "qrcode", "local"]  # 可仅保留adapter
+# 支持的cookie更新方法。adapter/napcat 为旧配置名，运行时会兼容映射。
+DEFAULT_COOKIE_METHODS = ["qrcode", "local"]
+COOKIE_METHODS = ["napcat_adapter", "napcat_http", "qrcode", "local"]
+COOKIE_METHOD_ALIASES = {
+    "adapter": "napcat_adapter",
+    "napcat": "napcat_http",
+}
+COOKIE_UNAVAILABLE_MESSAGE = (
+    "QQ空间 cookie 未配置，请使用 qrcode 扫码、local 本地 cookies.json，"
+    "或在 cookie_methods 中显式启用 napcat_adapter/napcat_http 获取 cookie"
+)
+
+def normalize_cookie_methods(methods: list[str] | None, allow_qrcode: bool = True) -> list[str]:
+    """规范化 cookie 获取方式，兼容旧配置名。"""
+    if methods is None:
+        methods = DEFAULT_COOKIE_METHODS.copy()
+
+    valid_methods: list[str] = []
+    for raw_method in methods:
+        method = str(raw_method).strip()
+        if not method:
+            continue
+        normalized = COOKIE_METHOD_ALIASES.get(method, method)
+        if normalized != method:
+            logger.warning(f"cookie_methods 中的旧名称 {method} 已映射为 {normalized}，建议更新配置")
+        if normalized not in COOKIE_METHODS:
+            logger.warning(f"忽略未知 cookie 获取方式: {method}")
+            continue
+        if normalized == "qrcode" and not allow_qrcode:
+            continue
+        if normalized not in valid_methods:
+            valid_methods.append(normalized)
+
+    if valid_methods:
+        return valid_methods
+
+    fallback = DEFAULT_COOKIE_METHODS.copy() if allow_qrcode else ["local"]
+    logger.warning(f"没有有效的 cookie 获取方式，使用默认方法: {fallback}")
+    return fallback
 
 # ---------- 工具函数 ----------
 def read_local_cookies() -> dict | None:
@@ -87,8 +123,8 @@ def getptqrtoken(qrsig):
     return str(2147483647 & e)
 
 # ---------- 获取cookie函数 ----------
-async def fetch_cookies_by_napcat(host: str, domain: str, port: str, napcat_token: str = "", max_retries: int = 1, retry_delay: int = 10) -> dict | None:
-    """通过Napcat http服务器获取cookie字典"""
+async def fetch_cookies_by_napcat_http(host: str, domain: str, port: str, napcat_token: str = "", max_retries: int = 1, retry_delay: int = 10) -> dict | None:
+    """通过 NapCat HTTP 服务器获取 cookie 字典。"""
     url = f"http://{host}:{port}/get_cookies"
 
     for attempt in range(max_retries):
@@ -104,7 +140,7 @@ async def fetch_cookies_by_napcat(host: str, domain: str, port: str, napcat_toke
                 resp.raise_for_status()
 
                 if resp.status_code != 200:
-                    error_msg = f"Napcat服务返回错误状态码: {resp.status_code}"
+                    error_msg = f"NapCat HTTP 服务返回错误状态码: {resp.status_code}"
                     if resp.status_code == 403:
                         error_msg += " (Token验证失败)"
                     logger.error(error_msg)
@@ -121,16 +157,20 @@ async def fetch_cookies_by_napcat(host: str, domain: str, port: str, napcat_toke
 
         except httpx.RequestError as e:
             if attempt < max_retries - 1:
-                logger.warning(f"无法连接到Napcat服务(尝试 {attempt + 1}/{max_retries}): {url}，错误: {str(e)}")
+                logger.warning(f"无法连接到 NapCat HTTP 服务(尝试 {attempt + 1}/{max_retries}): {url}，错误: {str(e)}")
                 await asyncio.sleep(retry_delay)
                 retry_delay *= 2
                 continue
-            logger.error(f"无法连接到Napcat服务(最终尝试): {url}，错误: {str(e)}")
+            logger.warning(f"无法连接到 NapCat HTTP 服务(最终尝试): {url}，错误: {str(e)}")
         except Exception as e:
             logger.error(f"获取cookie异常: {str(e)}")
 
-    logger.error(f"无法连接到Napcat服务: 超过最大重试次数({max_retries})")
+    logger.warning(f"无法连接到 NapCat HTTP 服务: 超过最大重试次数({max_retries})")
     return None
+
+
+# 兼容旧函数名
+fetch_cookies_by_napcat = fetch_cookies_by_napcat_http
 
 
 async def fetch_cookies_by_qrcode(max_timeout_times: int = 3) -> dict | None:
@@ -205,22 +245,43 @@ async def fetch_cookies_by_qrcode(max_timeout_times: int = 3) -> dict | None:
     logger.error("{}次尝试失败".format(max_timeout_times))
     return None
 
-async def fetch_cookies_by_adapter() -> dict | None:
-    """通过MaiBot Napcat Adapter API获取cookie字典"""
+async def fetch_cookies_by_napcat_adapter() -> dict | None:
+    """通过 MaiBot NapCat Adapter API 获取 cookie 字典。"""
     domain = "user.qzone.qq.com"
     if api is None:
-        logger.error("API上下文未设置，无法调用Napcat Adapter API")
+        logger.warning("API上下文未设置，无法调用 NapCat Adapter API")
         return None
-    else:
-        # 与Napcat处理方法一致
-        result = await api.call("maibot-team.napcat-adapter.adapter.napcat.account.get_cookies", params={"domain": domain})
-        if result.get("status") != "ok" or "cookies" not in result.get("data", {}):
-            logger.error(f"获取 cookie 失败: {result}")
-            return None
-        cookie_data = result["data"]
-        cookie_str = cookie_data["cookies"]
-        parsed_cookies = parse_cookie_string(cookie_str)
-        return parsed_cookies
+    try:
+        # 与 NapCat HTTP 处理方法一致
+        try:
+            result = await api.call(
+                "maibot-team.napcat-adapter",
+                "adapter.napcat.account.get_cookies",
+                params={"domain": domain},
+            )
+        except Exception as new_api_error:
+            logger.warning(f"NapCat Adapter 新版 API 调用失败，尝试旧式完整 API ID: {new_api_error}")
+            result = await api.call(
+                "maibot-team.napcat-adapter.adapter.napcat.account.get_cookies",
+                params={"domain": domain},
+            )
+    except Exception as e:
+        logger.warning(f"NapCat Adapter API 不可用或插件未启用，跳过该 cookie 获取方式: {e}")
+        return None
+    if not isinstance(result, dict):
+        logger.warning(f"NapCat Adapter API 返回格式异常: {result}")
+        return None
+    if result.get("status") != "ok" or "cookies" not in result.get("data", {}):
+        logger.warning(f"NapCat Adapter 获取 cookie 失败: {result}")
+        return None
+    cookie_data = result["data"]
+    cookie_str = cookie_data["cookies"]
+    parsed_cookies = parse_cookie_string(cookie_str)
+    return parsed_cookies
+
+
+# 兼容旧函数名
+fetch_cookies_by_adapter = fetch_cookies_by_napcat_adapter
             
 
 # async def fetch_cookies_by_clientkey() -> dict:
@@ -260,35 +321,30 @@ async def renew_cookies(
         host: str = "127.0.0.1",
         port: str = "9999",
         napcat_token: str = "",
-        methods: list[str] = ["adapter","napcat", "qrcode", "local"],
-        fallback_to_local: bool = True
+        methods: list[str] | None = None,
+        fallback_to_local: bool = True,
+        allow_qrcode: bool = True
 ) -> bool:
     """
     尝试更新cookie并保存到本地文件
 
     参数:
-        host: Napcat服务主机地址
-        port: Napcat服务端口
-        napcat_token: Napcat认证令牌
-        methods: 更新方法列表，按顺序尝试，支持: "napcat", "qrcode", "local"
+        host: NapCat HTTP服务主机地址
+        port: NapCat HTTP服务端口
+        napcat_token: NapCat HTTP认证令牌
+        methods: 更新方法列表，按顺序尝试，支持: "napcat_adapter", "napcat_http", "qrcode", "local"
         fallback_to_local: 当所有方法都失败时是否回退到本地cookie文件
+        allow_qrcode: 是否允许触发二维码扫码流程。后台任务应设为 False。
     返回:
         bool: 是否成功更新cookie
     """
     # 1小时内跳过更新cookie
     if should_skip_qr_login():
         logger.info("上次cookie更新时间在1小时内，跳过更新")
-        return False
-
-    # 获取配置的更新方法
-    if methods is None:
-        methods = ["napcat", "qrcode", "local"]
+        return os.path.exists(cookie_path)
 
     # 验证方法列表
-    valid_methods = [method for method in methods if method in COOKIE_METHODS]
-    if not valid_methods:
-        logger.warning("没有有效的cookie更新方法，使用默认方法")
-        valid_methods = ["napcat", "qrcode", "local"]
+    valid_methods = normalize_cookie_methods(methods, allow_qrcode=allow_qrcode)
 
     logger.info(f"使用cookie更新方法: {valid_methods}")
 
@@ -301,25 +357,25 @@ async def renew_cookies(
     # 按配置的方法顺序尝试获取cookie
     for method in valid_methods:
         try:
-            if method == "adapter":
-                logger.info("尝试通过Napcat Adapter获取cookie...")
-                cookie_dict = await fetch_cookies_by_adapter()
+            if method == "napcat_adapter":
+                logger.info("尝试通过 NapCat Adapter 获取cookie...")
+                cookie_dict = await fetch_cookies_by_napcat_adapter()
                 if cookie_dict:
-                    logger.info("Napcat Adapter获取cookie成功")
+                    logger.info("NapCat Adapter 获取cookie成功")
                     break
                 else:
-                    logger.info("Napcat Adapter获取cookie失败，尝试下一个方法")
+                    logger.info("NapCat Adapter 获取cookie失败，尝试下一个方法")
                     continue
 
-            if method == "napcat":
-                logger.info("尝试通过Napcat获取cookie...")
+            if method == "napcat_http":
+                logger.info("尝试通过 NapCat HTTP 获取cookie...")
                 domain = "user.qzone.qq.com"
-                cookie_dict = await fetch_cookies_by_napcat(host, domain, port, napcat_token)
+                cookie_dict = await fetch_cookies_by_napcat_http(host, domain, port, napcat_token)
                 if cookie_dict:
-                    logger.info("Napcat获取cookie成功")
+                    logger.info("NapCat HTTP 获取cookie成功")
                     break
                 else:
-                    logger.info("Napcat获取cookie失败，尝试下一个方法")
+                    logger.info("NapCat HTTP 获取cookie失败，尝试下一个方法")
                     continue
 
             # elif method == "clientkey":

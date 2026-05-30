@@ -1,0 +1,13 @@
+[plugin]
+enabled = true
+config_version = "1.0.0"
+text_model = "replyer"
+
+# 默认不依赖 NapCat。SnowLuma/无 NapCat 环境建议使用 qrcode 或 local。
+# 可选值按顺序尝试: "qrcode", "local", "napcat_adapter", "napcat_http"。
+cookie_methods = ["qrcode", "local"]
+
+# 以下 NapCat HTTP 配置仅在 cookie_methods 包含 "napcat_http" 时使用。
+http_host = "127.0.0.1"
+http_port = 9999
+napcat_token = ""

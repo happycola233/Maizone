@@ -153,7 +153,7 @@ class FeedMonitor:
                 # 对白名单中的QQ单独优先处理
                 for qq in white_list:
                     logger.info(f"开始处理白名单中的QQ: {qq}")
-                    success, message = await read_feed(qq)
+                    success, message = await read_feed(qq, allow_qrcode=False)
                     if not success:
                         logger.warning(f"未进行任何处理: {message}")
                     else:
@@ -312,7 +312,7 @@ class ScheduleSender:
         else:
             topic = random.choice(fixed_topic)
         # 发送说说
-        success, message = await send_feed(topic)
+        success, message = await send_feed(topic, allow_qrcode=False)
         if success:
             logger.info(f"已成功发送定时说说: {topic}")
         else:

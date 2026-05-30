@@ -11,7 +11,7 @@ import random
 from pathlib import Path
 
 from .qzone_api import create_qzone_api, QzoneAPI
-from .cookie import renew_cookies
+from .cookie import COOKIE_UNAVAILABLE_MESSAGE, normalize_cookie_methods, renew_cookies
 from .image import generate_images
 
 # 全局插件上下文
@@ -22,6 +22,27 @@ def set_utils_plugin_context(ctx):
 
 # 数据存储
 _processed_list_lock = asyncio.Lock()
+
+
+async def get_qzone_api_or_error(config, allow_qrcode: bool = True, purpose: str = "使用QQ空间") -> tuple[QzoneAPI | None, str | None]:
+    """按配置准备 QQ 空间 cookie，并返回 QzoneAPI 或清晰错误。"""
+    logger = plugin_context.ctx.logger  # type: ignore
+    methods = normalize_cookie_methods(config.plugin.cookie_methods, allow_qrcode=allow_qrcode)  # type: ignore
+    await renew_cookies(
+        config.plugin.http_host,  # type: ignore
+        config.plugin.http_port,  # type: ignore
+        config.plugin.napcat_token,  # type: ignore
+        methods,
+        True,
+        allow_qrcode=allow_qrcode,
+    )
+    qzone = create_qzone_api()
+    if qzone and getattr(qzone, "uin", ""):
+        return qzone, None
+
+    message = f"{COOKIE_UNAVAILABLE_MESSAGE}，{purpose}失败"
+    logger.warning(message)
+    return None, message
 
 async def _save_processed_list(processed_list: Dict[str, List[str]]) -> bool:
     """
@@ -77,7 +98,7 @@ async def _load_processed_list() -> Dict[str, List[str]]:
         logger.warning("未找到已处理说说列表，将创建新列表")
         return {}
     
-async def send_feed(topic: str) -> Tuple[bool, str]:
+async def send_feed(topic: str, allow_qrcode: bool = True) -> Tuple[bool, str]:
     """
     根据主题和配置生成文本和图片，发送至QQ空间，返回是否发送成功和发送结果。
 
@@ -99,11 +120,9 @@ async def send_feed(topic: str) -> Tuple[bool, str]:
         topic=topic,
         bot_expression=plugin_context.reply_style # type: ignore
     )
-    await renew_cookies(config.plugin.http_host, config.plugin.http_port, config.plugin.napcat_token) # type: ignore
-    qzone = create_qzone_api()
+    qzone, error_message = await get_qzone_api_or_error(config, allow_qrcode=allow_qrcode, purpose="发送说说")
     if not qzone:
-        logger.error("创建QzoneAPI实例失败，无法发送说说")
-        return False, "发送说说失败"
+        return False, error_message or COOKIE_UNAVAILABLE_MESSAGE
     history = await qzone.get_send_history(config.send.history_number) # type: ignore
     prompt += "\n以下是你近期发布过的说说，请勿在短时间内发布重复内容：\n"
     prompt += history
@@ -124,7 +143,7 @@ async def send_feed(topic: str) -> Tuple[bool, str]:
         logger.error("发送说说失败")
         return False, "说说发布失败"
 
-async def read_feed(target_qq: str) -> Tuple[bool, list[dict[str, Any]]]:
+async def read_feed(target_qq: str, allow_qrcode: bool = True) -> Tuple[bool, list[dict[str, Any]]]:
     """
     阅读指定QQ号最近的动态，根据配置进行点赞回复，并返回结果
     Args:
@@ -135,11 +154,9 @@ async def read_feed(target_qq: str) -> Tuple[bool, list[dict[str, Any]]]:
     """
     logger = plugin_context.ctx.logger  # type: ignore
     config = plugin_context.config  # type: ignore
-    await renew_cookies(config.plugin.http_host, config.plugin.http_port, config.plugin.napcat_token)  # type: ignore
-    qzone = create_qzone_api()
+    qzone, error_message = await get_qzone_api_or_error(config, allow_qrcode=allow_qrcode, purpose="读取说说")
     if not qzone:
-        logger.error("创建QzoneAPI实例失败，无法读取说说")
-        return False, [{"error": "无法创建QzoneAPI实例"}]
+        return False, [{"error": error_message or COOKIE_UNAVAILABLE_MESSAGE}]
     # ===== 获取说说列表 =====
     feeds_list = await qzone.get_list(target_qq, config.read.read_number)  # type: ignore
     first_feed = feeds_list[0]
@@ -224,11 +241,9 @@ async def monitor_read_feed() -> Tuple[bool, list[dict[str, Any]]]:
     processed_list = await _load_processed_list()
     bot_personality = plugin_context.personality  # type: ignore
     bot_expression = plugin_context.reply_style  # type: ignore
-    await renew_cookies(config.plugin.http_host, config.plugin.http_port, config.plugin.napcat_token)  # type: ignore
-    qzone = create_qzone_api()
+    qzone, error_message = await get_qzone_api_or_error(config, allow_qrcode=False, purpose="自动阅读说说")
     if not qzone:
-        logger.error("创建QzoneAPI实例失败，无法监控说说")
-        return False, [{"error": "无法创建QzoneAPI实例"}]
+        return False, [{"error": error_message or COOKIE_UNAVAILABLE_MESSAGE}]
     # 获取说说列表
     logger.info("正在阅读空间...")
     feeds_list = await qzone.get_qzone_list()
@@ -319,11 +334,9 @@ async def reply_feed() -> Tuple[bool, str]:
     logger = plugin_context.ctx.logger  # type: ignore
     config = plugin_context.config  # type: ignore
     reply_number = config.auto_reply.reply_number
-    await renew_cookies(config.plugin.http_host, config.plugin.http_port, config.plugin.napcat_token)
-    qzone = create_qzone_api()
+    qzone, error_message = await get_qzone_api_or_error(config, allow_qrcode=False, purpose="自动回复评论")
     if not qzone:
-        logger.error("创建QzoneAPI实例失败，无法回复说说")
-        return False, "回复说说失败"
+        return False, error_message or COOKIE_UNAVAILABLE_MESSAGE
     # 获取自己的说说列表
     processed_list = await _load_processed_list()
     feeds_list = await qzone.get_list(qzone.uin, reply_number, False)
@@ -374,7 +387,14 @@ async def reply_feed() -> Tuple[bool, str]:
             logger.info(f"正在回复{comment['nickname']}的评论'{comment['content'][:30]}...'")
             response = await plugin_context.ctx.llm.generate(prompt, model=config.plugin.text_model)  # type: ignore
             reply_message = response.get("response", "")
-            await renew_cookies(config.plugin.http_host, config.plugin.http_port, config.plugin.napcat_token)
+            await renew_cookies(
+                config.plugin.http_host,
+                config.plugin.http_port,
+                config.plugin.napcat_token,
+                normalize_cookie_methods(config.plugin.cookie_methods, allow_qrcode=False),
+                True,
+                allow_qrcode=False,
+            )
             result = await qzone.reply(fid, target_qq, comment['nickname'], reply_message, comment['comment_tid'])
             if result:
                 logger.info(f"成功回复{comment['nickname']}的评论'{comment['content'][:30]}...'：{reply_message}")

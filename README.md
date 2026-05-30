@@ -21,15 +21,45 @@ Maizone（麦麦空间）插件v3.0.1测试版，让你的麦麦发说说，读Q
 
 ### 一、安装插件
 
-1. 安装并启用[Napcat_Adapter](https://docs.mai-mai.org/manual/adapters/napcat.html)插件，并进行相应配置
-2. 从插件商店下载本插件、或克隆本仓库至 `MaiBot\plugins` 文件夹下
-3. 命令运行较为耗时，建议修改主程序的插件运行超时阈值
+1. 从插件商店下载本插件、或克隆本仓库至 `MaiBot\plugins` 文件夹下
+2. 在 `config.toml` 的 `[plugin]` 中确认 `enabled = true`
+3. 按下方说明配置 QQ 空间 cookie 获取方式。命令运行较为耗时，建议修改主程序的插件运行超时阈值
 
 ```bash
 git clone https://github.com/internetsb/Maizone.git
 ```
 
-### 二、发送说说
+### 二、Cookie 获取方式
+
+默认配置：
+
+```toml
+[plugin]
+enabled = true
+cookie_methods = ["qrcode", "local"]
+```
+
+`cookie_methods` 会按顺序尝试，支持以下值：
+
+- `qrcode`：生成 `qrcode.png`，使用手机 QQ 扫码登录 QQ 空间。
+- `local`：读取插件目录下的 `cookies.json`。
+- `napcat_adapter`：可选，通过已启用的 NapCat Adapter API 获取 cookie。
+- `napcat_http`：可选，通过 NapCat HTTP `/get_cookies` 获取 cookie。
+
+SnowLuma / 无 NapCat 环境建议使用 `qrcode` 或 `local`。目前未确认 SnowLuma Adapter 提供等价的 QQ 空间 cookie API，因此插件不会尝试从 SnowLuma 自动获取 QQ 空间 cookie。
+
+NapCat 用户仍可显式启用：
+
+```toml
+cookie_methods = ["napcat_adapter", "napcat_http", "qrcode", "local"]
+
+# 仅 napcat_http 使用
+http_host = "127.0.0.1"
+http_port = 9999
+napcat_token = "自己设置的密钥"
+```
+
+### 三、发送说说
 
 使用命令：`/sendfeed <说说主题>` 或 自然语言 （如："发一条今天天气的说说吧"）
 
@@ -39,13 +69,13 @@ git clone https://github.com/internetsb/Maizone.git
 - `enable_image`：是否在发说说时附带配图
 - `image_mode`：决定配图为表情包、或是AI生成（需进一步配置）、或是二者混合随机
 
-### 三、阅读说说
+### 四、阅读说说
 
 使用命令：`/readfeed <qq昵称>` 或 自然语言（如："麦麦读下我的qq空间"）
 
 正常情况下，麦麦会获取该目标账号最近的动态并点赞评论
 
-### 四、自动发送
+### 五、自动发送
 
 默认关闭
 
@@ -59,7 +89,7 @@ git clone https://github.com/internetsb/Maizone.git
 - `fluctuation`：在时间表基础上的上下浮动分钟数
 - `random_topic`：开启后让LLM自行决定主题，关闭后从固定列表中选择
 
-### 五、自动阅读
+### 六、自动阅读
 
 默认开启
 
@@ -71,7 +101,7 @@ git clone https://github.com/internetsb/Maizone.git
 - `interval`：每隔多少分钟读取一次
 - `silent_duration`：静默时间，在该时间段内不进行阅读
 
-### 六、自动回复评论
+### 七、自动回复评论
 
 默认开启
 
@@ -83,7 +113,7 @@ git clone https://github.com/internetsb/Maizone.git
 - `reply_number`：对自己发的最新的多少条说说下的评论进行回复
 - `reply_probability`：回复概率
 
-### 七、AI配图
+### 八、AI配图
 
 openai格式生图，默认配置为火山引擎seedream
 
@@ -96,12 +126,12 @@ openai格式生图，默认配置为火山引擎seedream
 - `prompt`：提示词，LLM根据待发送说说文本生成配图的生成提示词，再生成图片
 - `ref_prompt`：启用参考图时附加在prompt后的提示词
 
-### 八、权限配置
+### 九、权限配置
 
 - `blacklist`：黑名单，在此名单中的qq将无法使用此功能
 - `whitelist`：白名单，在此名单中的qq将可以使用此功能
 
-### 九、插件API
+### 十、插件API
 
 #### 在 `_manifest.json` 中添加插件依赖
 
@@ -117,7 +147,8 @@ openai格式生图，默认配置为火山引擎seedream
 
 发送文本和图片到QQ空间
 
-- **api_id**：`internetsb.maizone.send_feed_api`
+- **plugin_id**：`internetsb.maizone`
+- **api_name**：`send_feed_api`
 - **参数**：
   - `message`: str = （可选）文本内容
   - `images`：List[bytes] = （可选）图片列表
@@ -127,12 +158,11 @@ openai格式生图，默认配置为火山引擎seedream
 - **调用示例**：
 
 ```python
-api_id = "internetsb.maizone.send_feed_api"
 message = "Hello World 插件已加载！🎉"
 image_path = Path(__file__).parent / "reference.jpg"
 image_bytes = image_path.read_bytes()
 params = {"message": message, "images": [image_bytes]}
-result = await self.ctx.api.call(api_id, **params)
+result = await self.ctx.api.call("internetsb.maizone", "send_feed_api", **params)
 self.ctx.logger.info(f"API 调用结果:{result}")
 ```
 
@@ -140,7 +170,8 @@ self.ctx.logger.info(f"API 调用结果:{result}")
 
 获取指定用户的最新动态列表
 
-- **api_id**：`internetsb.maizone.get_feeds_list_api`
+- **plugin_id**：`internetsb.maizone`
+- **api_name**：`get_feeds_list_api`
 - **参数**：
   - `target_qq`：str = 目标qq
   - `num`: int = （可选）获取动态数量，默认为5
@@ -152,10 +183,9 @@ self.ctx.logger.info(f"API 调用结果:{result}")
 - **调用示例**：
 
 ```python
-api_id = "internetsb.maizone.get_feeds_list_api"
 target_user_id = "1523640161"
 params = {"target_qq": target_user_id, "num": 5, "filter": False}
-result = await self.ctx.api.call(api_id, **params)
+result = await self.ctx.api.call("internetsb.maizone", "get_feeds_list_api", **params)
 self.ctx.logger.info(f"API 调用结果:{result}")
 ```
 
@@ -163,11 +193,23 @@ self.ctx.logger.info(f"API 调用结果:{result}")
 
 - **Q：所有功能都不可用/cookie获取失败/提示"请先登录"**
 
-  **A：请检查插件目录下是否生成cookie，cookie中uin是否正确对应qq号，若错误请尝试使用以下备选方案**
+  **A：请检查插件目录下是否生成 `cookies.json`，cookie 中 `uin` 是否正确对应 QQ 号。SnowLuma / 无 NapCat 环境请优先使用 `qrcode` 或 `local`。**
 
-  1. **备选napcat连接**
+  1. **扫码登录**
 
-     在Napcat中添加一个http服务器，
+     默认 `cookie_methods = ["qrcode", "local"]`。插件目录下会生成 `qrcode.png`，打开图片，使用手机 QQ 扫码登录 QQ 空间，有效期约一天。
+
+  2. **本地 cookies.json**
+
+     将可用的 QQ 空间 cookie 保存为插件目录下的 `cookies.json`，并确保配置包含：
+
+     ```toml
+     cookie_methods = ["local"]
+     ```
+
+  3. **可选 NapCat HTTP 连接**
+
+     仅在你实际运行 NapCat HTTP 服务时使用。在 NapCat 中添加一个 HTTP 服务器：
 
      ```
      Host = "0.0.0.0"
@@ -175,16 +217,14 @@ self.ctx.logger.info(f"API 调用结果:{result}")
      Token = "自己设置一个密钥"
      ```
 
-     在插件基础配置中填写
+     在插件基础配置中填写：
 
-     ```
+     ```toml
+     cookie_methods = ["napcat_http", "qrcode", "local"]
      http_host = "127.0.0.1" # 服务的地址，docker请尝试填写"napcat"
-     http_port = "9999" # 刚才填写的Port
+     http_port = 9999 # 刚才填写的Port
      napcat_token = "自己设置的密钥"
      ```
-  2. **扫码登录**
-
-     插件目录下会生成qrcode.png，打开图片，使用手机扫码登录QQ空间，有效期约一天
 - **Q：No module named 'bs4'/No module named 'json5'**
 
   **A：请检查MaiBot版本，应该为1.0.0以上，旧版本请查看旧版文档**

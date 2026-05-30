@@ -10,13 +10,13 @@ class PluginSectionConfig(PluginConfigBase):
     __ui_order__ = 0
 
     enabled: bool = Field(default=True, description="是否启用插件")
-    config_version: float = Field(default=1.0, description="配置版本")
+    config_version: str = Field(default="1.0.0", description="配置版本")
     text_model: str = Field(default="replyer", description="[默认即可]使用的文本模型在主程序的任务名（'replyer','planner','embedding', 'emoji', 'learner', 'memory', 'utils', 'vlm', 'voice'）")
     # 获取cookie相关配置
-    http_host: str = Field(default="127.0.0.1", description="备用Napcat HTTP服务地址")
-    http_port: int = Field(default=9999, description="备用Napcat HTTP服务端口")
-    napcat_token: str = Field(default="", description="备用Napcat HTTP服务Token")
-    cookie_methods: list[str] = Field(default=["adapter","napcat","qrcode", "local"], description="Cookie获取方式（顺序尝试）")
+    http_host: str = Field(default="127.0.0.1", description="NapCat HTTP服务地址，仅 cookie_methods 包含 napcat_http 时使用")
+    http_port: int = Field(default=9999, description="NapCat HTTP服务端口，仅 cookie_methods 包含 napcat_http 时使用")
+    napcat_token: str = Field(default="", description="NapCat HTTP服务Token，仅 cookie_methods 包含 napcat_http 时使用")
+    cookie_methods: list[str] = Field(default=["qrcode", "local"], description="Cookie获取方式（顺序尝试）：qrcode、local；可显式加入napcat_adapter或napcat_http")
 
 class SendConfig(PluginConfigBase):
     """指令发说说配置"""

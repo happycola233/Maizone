@@ -22,11 +22,6 @@
   },
   "dependencies": [
     {
-      "type": "plugin",
-      "id": "maibot-team.napcat-adapter",
-      "version_spec": ">=0.1.0"
-    },
-    {
       "type": "python_package",
       "name": "bs4",
       "version_spec": ">=0.0.1"

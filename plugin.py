@@ -2,10 +2,10 @@ from maibot_sdk import Command, MaiBotPlugin, Tool, API
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 from .config import MaizonePluginConfig
-from .cookie import renew_cookies, set_api_capability, set_cookie_logger
-from .qzone_api import create_qzone_api, set_qzoneapi_logger
+from .cookie import set_api_capability, set_cookie_logger
+from .qzone_api import set_qzoneapi_logger
 from .image import set_images_plugin_context
-from .utils import set_utils_plugin_context, read_feed, send_feed
+from .utils import get_qzone_api_or_error, set_utils_plugin_context, read_feed, send_feed
 from .tasks import FeedMonitor, ScheduleSender, set_tasks_logger
 
 class MaizonePlugin(MaiBotPlugin):
@@ -13,7 +13,7 @@ class MaizonePlugin(MaiBotPlugin):
     personality = ""
     reply_style = ""
     async def on_load(self):
-        """插件加载：检查配置、测试napcat连接、注册定时任务等"""
+        """插件加载：检查配置并注册定时任务。"""
         set_api_capability(self.ctx.api)
         set_tasks_logger(self.ctx.logger)
         set_qzoneapi_logger(self.ctx.logger)
@@ -26,15 +26,7 @@ class MaizonePlugin(MaiBotPlugin):
         text_model = self.config.plugin.text_model # type: ignore
         if text_model not in available_models:
             self.ctx.logger.error(f"文本模型{text_model}不可用，请检查配置")
-
-        # ===== 测试通过adapter或napcat获取cookie =====
-        napcat_host = self.config.plugin.http_host # type: ignore
-        napcat_port = self.config.plugin.http_port # type: ignore
-        napcat_token = self.config.plugin.napcat_token # type: ignore
-        if not await renew_cookies(napcat_host, napcat_port, napcat_token, ['adapter'], False) and not await renew_cookies(napcat_host, napcat_port, napcat_token, ['napcat'], False):
-            self.ctx.logger.error("通过Napcat获取Cookie失败，请检查配置，或忍受手动扫码登录的麻烦")
-        else:
-            self.ctx.logger.info("Napcat成功连接")
+        self.ctx.logger.info(f"QQ空间 cookie 获取方式: {self.config.plugin.cookie_methods}") # type: ignore
 
         # ===== 从主程序获取人格，表达方式等配置 =====
         self.ctx.logger.info("正在加载人格配置...")
@@ -188,10 +180,9 @@ class MaizonePlugin(MaiBotPlugin):
     )
     async def send_feed_api(self, message: str = "", images: list[bytes] = [], **kwargs):
         """API版本的发送说说工具，供其他插件调用"""
-        await renew_cookies(self.config.plugin.http_host, self.config.plugin.http_port, self.config.plugin.napcat_token, ['adapter', 'napcat'], True) # type: ignore
-        qzone = create_qzone_api()
+        qzone, error_message = await get_qzone_api_or_error(self.config, allow_qrcode=True, purpose="发送说说") # type: ignore
         if qzone is None:
-            return {"result": False, "message": "无法创建QzoneAPI实例，发送说说失败"}
+            return {"result": False, "message": error_message or "QQ空间 cookie 未配置，发送说说失败"}
         fid = await qzone.publish_emotion(content=message, images=images)
         if fid is None:
             return {"result": False, "message": "发送说说失败"}
@@ -206,10 +197,9 @@ class MaizonePlugin(MaiBotPlugin):
     )
     async def get_feeds_list_api(self, target_qq: str, num: int = 5, filter: bool = False, **kwargs):
         """API版本的获取说说列表工具"""
-        await renew_cookies(self.config.plugin.http_host, self.config.plugin.http_port, self.config.plugin.napcat_token, ['adapter', 'napcat'], True) # type: ignore
-        qzone = create_qzone_api()
+        qzone, error_message = await get_qzone_api_or_error(self.config, allow_qrcode=True, purpose="获取说说列表") # type: ignore
         if qzone is None:
-            return {"result": False, "message": "无法创建QzoneAPI实例，获取列表失败"}
+            return {"result": False, "message": error_message or "QQ空间 cookie 未配置，获取列表失败"}
         feeds_list = await qzone.get_list(target_qq, num, filter)
         if not feeds_list or (len(feeds_list) == 1 and "error" in feeds_list[0]):
             return {"result": False, "message": f"获取说说列表失败：{feeds_list[0].get('error', '未知错误') if feeds_list else '返回列表为空'}"}
@@ -219,4 +209,4 @@ class MaizonePlugin(MaiBotPlugin):
 
 def create_plugin() -> MaizonePlugin:
     """创建插件实例。"""
-    return MaizonePlugin() 
+    return MaizonePlugin()
