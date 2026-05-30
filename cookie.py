@@ -39,14 +39,15 @@ cookie_path = str(Path(__file__).parent.resolve() / "cookies.json")
 
 # 支持的cookie更新方法。adapter/napcat 为旧配置名，运行时会兼容映射。
 DEFAULT_COOKIE_METHODS = ["qrcode", "local"]
-COOKIE_METHODS = ["napcat_adapter", "napcat_http", "qrcode", "local"]
+COOKIE_METHODS = ["snowluma_adapter", "napcat_adapter", "napcat_http", "qrcode", "local"]
 COOKIE_METHOD_ALIASES = {
     "adapter": "napcat_adapter",
     "napcat": "napcat_http",
+    "snowluma": "snowluma_adapter",
 }
 COOKIE_UNAVAILABLE_MESSAGE = (
     "QQ空间 cookie 未配置，请使用 qrcode 扫码、local 本地 cookies.json，"
-    "或在 cookie_methods 中显式启用 napcat_adapter/napcat_http 获取 cookie"
+    "或在 cookie_methods 中显式启用 snowluma_adapter/napcat_adapter/napcat_http 获取 cookie"
 )
 
 def normalize_cookie_methods(methods: list[str] | None, allow_qrcode: bool = True) -> list[str]:
@@ -280,6 +281,40 @@ async def fetch_cookies_by_napcat_adapter() -> dict | None:
     return parsed_cookies
 
 
+async def fetch_cookies_by_snowluma_adapter() -> dict | None:
+    """通过 MaiBot SnowLuma Adapter API 获取 cookie 字典。"""
+    domain = "user.qzone.qq.com"
+    if api is None:
+        logger.warning("API上下文未设置，无法调用 SnowLuma Adapter API")
+        return None
+    try:
+        try:
+            result = await api.call(
+                "maibot-team.snowluma-adapter",
+                "adapter.napcat.account.get_cookies",
+                params={"domain": domain},
+            )
+        except Exception as new_api_error:
+            logger.warning(f"SnowLuma Adapter 新版 API 调用失败，尝试旧式完整 API ID: {new_api_error}")
+            result = await api.call(
+                "maibot-team.snowluma-adapter.adapter.napcat.account.get_cookies",
+                params={"domain": domain},
+            )
+    except Exception as e:
+        logger.warning(f"SnowLuma Adapter API 不可用或插件未启用，跳过该 cookie 获取方式: {e}")
+        return None
+    if not isinstance(result, dict):
+        logger.warning(f"SnowLuma Adapter API 返回格式异常: {result}")
+        return None
+    if result.get("status") != "ok" or "cookies" not in result.get("data", {}):
+        logger.warning(f"SnowLuma Adapter 获取 cookie 失败: {result}")
+        return None
+    cookie_data = result["data"]
+    cookie_str = cookie_data["cookies"]
+    parsed_cookies = parse_cookie_string(cookie_str)
+    return parsed_cookies
+
+
 # 兼容旧函数名
 fetch_cookies_by_adapter = fetch_cookies_by_napcat_adapter
             
@@ -332,7 +367,7 @@ async def renew_cookies(
         host: NapCat HTTP服务主机地址
         port: NapCat HTTP服务端口
         napcat_token: NapCat HTTP认证令牌
-        methods: 更新方法列表，按顺序尝试，支持: "napcat_adapter", "napcat_http", "qrcode", "local"
+        methods: 更新方法列表，按顺序尝试，支持: "snowluma_adapter", "napcat_adapter", "napcat_http", "qrcode", "local"
         fallback_to_local: 当所有方法都失败时是否回退到本地cookie文件
         allow_qrcode: 是否允许触发二维码扫码流程。后台任务应设为 False。
     返回:
@@ -357,6 +392,16 @@ async def renew_cookies(
     # 按配置的方法顺序尝试获取cookie
     for method in valid_methods:
         try:
+            if method == "snowluma_adapter":
+                logger.info("尝试通过 SnowLuma Adapter 获取cookie...")
+                cookie_dict = await fetch_cookies_by_snowluma_adapter()
+                if cookie_dict:
+                    logger.info("SnowLuma Adapter 获取cookie成功")
+                    break
+                else:
+                    logger.info("SnowLuma Adapter 获取cookie失败，尝试下一个方法")
+                    continue
+
             if method == "napcat_adapter":
                 logger.info("尝试通过 NapCat Adapter 获取cookie...")
                 cookie_dict = await fetch_cookies_by_napcat_adapter()

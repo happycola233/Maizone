@@ -43,10 +43,17 @@ cookie_methods = ["qrcode", "local"]
 
 - `qrcode`：生成 `qrcode.png`，使用手机 QQ 扫码登录 QQ 空间。
 - `local`：读取插件目录下的 `cookies.json`。
+- `snowluma_adapter`：可选，通过已启用的 SnowLuma Adapter API 获取 cookie。
 - `napcat_adapter`：可选，通过已启用的 NapCat Adapter API 获取 cookie。
 - `napcat_http`：可选，通过 NapCat HTTP `/get_cookies` 获取 cookie。
 
-SnowLuma / 无 NapCat 环境建议使用 `qrcode` 或 `local`。目前未确认 SnowLuma Adapter 提供等价的 QQ 空间 cookie API，因此插件不会尝试从 SnowLuma 自动获取 QQ 空间 cookie。
+SnowLuma 用户可显式启用：
+
+```toml
+cookie_methods = ["snowluma_adapter", "qrcode", "local"]
+```
+
+无适配器环境建议使用 `qrcode` 或 `local`。
 
 NapCat 用户仍可显式启用：
 
@@ -193,7 +200,7 @@ self.ctx.logger.info(f"API 调用结果:{result}")
 
 - **Q：所有功能都不可用/cookie获取失败/提示"请先登录"**
 
-  **A：请检查插件目录下是否生成 `cookies.json`，cookie 中 `uin` 是否正确对应 QQ 号。SnowLuma / 无 NapCat 环境请优先使用 `qrcode` 或 `local`。**
+  **A：请检查插件目录下是否生成 `cookies.json`，cookie 中 `uin` 是否正确对应 QQ 号。SnowLuma 用户可使用 `snowluma_adapter`，无适配器环境请优先使用 `qrcode` 或 `local`。**
 
   1. **扫码登录**
 
@@ -207,7 +214,15 @@ self.ctx.logger.info(f"API 调用结果:{result}")
      cookie_methods = ["local"]
      ```
 
-  3. **可选 NapCat HTTP 连接**
+  3. **可选 SnowLuma Adapter 连接**
+
+     仅在你已启用 MaiBot SnowLuma Adapter，且 SnowLuma 本体支持 `get_cookies` 时使用：
+
+     ```toml
+     cookie_methods = ["snowluma_adapter", "qrcode", "local"]
+     ```
+
+  4. **可选 NapCat HTTP 连接**
 
      仅在你实际运行 NapCat HTTP 服务时使用。在 NapCat 中添加一个 HTTP 服务器：
 
